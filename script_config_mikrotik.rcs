@@ -1,0 +1,171 @@
+## define as configuracoes do SNMP para monitoramento pelo The Dude / Zabbix, etc...
+/snmp community set [ find default=yes ] name=MINHA_REDE write-access=yes
+/snmp set trap-target=192.168.1.1
+/snmp set enabled=yes location=minha_rede trap-generators=interfaces trap-interfaces=all trap-target=192.168.1.1
+
+## define as configuracoes do servidor DNS
+/ip dns set servers=8.8.8.8,8.8.4.4
+
+## desativa o servidor de DNS no Mikrotik local, evitando uso indevido do DNS local do Mikrotik
+/ip dns set allow-remote-requests=no
+
+## define quais enderecos IP poderao acessar os servicos do Mikrotik (telnet, ssh, winbox)
+/ip service
+   set telnet address=192.168.1.0/24
+   set ssh address=192.168.1.0/24
+   set winbox address=192.168.1.0/24
+/ip service   
+   set telnet address=10.0.0.0/24
+   set ssh address=10.0.0.0/24
+   set winbox address=10.0.0.0/24   
+
+## desativa os servicos desnecessarios do Mikrotik (ftp, www, www-ssl, api, api-ssl)
+/ip service
+   set ftp address=192.168.1.0/24 disabled=yes
+   set www address=192.168.1.0/24 disabled=yes
+   set www-ssl address=192.168.1.0/24 disabled=yes
+   set api address=192.168.1.0/24 disabled=yes
+   set api-ssl address=192.168.1.0/24 disabled=yes
+/ip service   
+   set ftp address=10.0.0.0/24 disabled=yes
+   set www address=10.0.0.0/24 disabled=yes
+   set www-ssl address=10.0.0.0/24 disabled=yes
+   set api address=10.0.0.0/24 disabled=yes
+   set api-ssl address=10.0.0.0/24 disabled=yes   
+
+## desativa o proxy local do Mikrotik
+/ip proxy set enabled=no
+
+## configura o servidor de horario para utilizacao do Mikrotik
+/system clock set time-zone-name=America/Sao_Paulo
+/system ntp client set enabled=yes primary-ntp=209.81.9.7
+
+## configura a conta de e-mail que o Mikrotik utilizara para envio dos backups
+/tool e-mail set address=mail.minha_rede.com.br port=25 from=mikrotik@minha_rede.com.br user=mikrotik@minha_rede.com.br password=minha_senha
+
+## remove versoes anteriores dos scripts
+/system script remove [find name=backup]
+/system script remove [find name=voltagem]
+
+## remove agendamento anteriores dos scripts
+/system scheduler remove [find name=backup]
+/system scheduler remove [find name=volt]
+
+## inclui o script de Backup
+/system script
+   add name=backup source=":global\
+       \_destino \"mkbackup@minha_rede.com.br\"\r\
+       \n\r\
+       \n/system clock set time-zone-name=America/Sao_Paulo\r\
+       \n\r\
+       \n/system ntp client set enabled=yes primary-ntp=209.81.9.7\r\
+       \n\r\
+       \n:global data [/system clock get date]\r\
+       \n:global hora [/system clock get time]\r\
+       \n:global ident [/system identity get name]\r\
+       \n:global ips [/ip address get 0 address]\r\
+       \n:global plataforma [/system resource get platform]\r\
+       \n:global versao [/system resource get version]\r\
+       \n:global hardware [/system resource get board-name]\r\
+       \n\r\
+       \n/system backup save name=backup\r\
+       \n/export file comandos\r\
+       \n\r\
+       \n/tool e-mail send to=\$destino subject=\"Backup de \$ident \$data \$hora\
+       \"  file=backup.backup body=\"Arquivo de backup da \$ident (\$ips) \$hardw\
+       are \$plataforma Router OS \$versao\"\r\
+       \n\r\
+       \n/tool e-mail send to=\$destino subject=\"Comandos de \$ident \$data \$ho\
+       ra\"  file=comandos.rsc body=\"Arquivo de comandos da \$ident (\$ips) \$ha\
+       rdware \$plataforma Router OS \$versao\""
+
+## inclui o script de monitoramento da voltagem
+/system script
+   add name=voltagem source=":global v\
+       oltagem 11\r\
+       \n/system clock set time-zone-name=America/Sao_Paulo\r\
+       \n:global data [/system clock get date]\r\
+       \n:global hora [/system clock get time]\r\
+       \n:global iprb [/ip address get 0 address]\r\
+       \n:global namerb [/system identity get name]\r\
+       \n:local cvolt 0\r\
+       \n:local volt 0\r\
+       \n:local cokey 0\r\
+       \n\r\
+       \n:for i from=1 to=5 do={ \r\
+       \n:put \$i\r\
+       \n:set \$volt [/system healt get voltage]\r\
+       \n:set \$volt (\$volt/10)\r\
+       \n :if (\$volt<\$voltagem) do={\r\
+       \n     :set cvolt (\$cvolt + 1)\r\
+       \n } \r\
+       \ndelay 5\r\
+       \n}\r\
+       \n\r\
+       \n:if (\$cvolt>4) do={ \r\
+       \n    :set \$volt [/system healt get voltage]\r\
+       \n    :set \$volt (\$volt/10)\r\
+       \n    /tool e-mail send to=\"mkbackup@minha_rede.com.br\" subject=\"Baixa voltagem e\
+       m \$namerb - \$iprb - \$volt\"\r\
+       \n   /log info \"Baixa voltagem: \$volt V\"\r\
+       \n   /ip firewall nat dis [find comment=\"monitoramento VOLTAGEM\"]\r\
+       \n}\r\
+       \n\r\
+       \n:if (\$cvolt<5) do={\r\
+       \n   /ip firewall nat en [find comment=\"monitoramento VOLTAGEM\"]\r\
+       \n}"
+
+## cria o agendamento do monitoramento da voltagem (a cada 5 minutos)
+/system scheduler add interval=5m name=volt on-event=voltagem start-date=jan/01/1970 start-time=00:00:00
+
+## cria o agendamento do envio dos backups (1 vez por dia)
+/system scheduler add interval=1d name=backup on-event=backup start-date=jan/01/1970 start-time=00:00:00
+
+## habilita os agendamentos
+/system scheduler enable volt
+/system scheduler enable backup
+
+## cria uma lista de acesso com os enderecos IP que poderao acessar o equipamento
+/ip firewall address-list add address=192.168.1.1 comment=LOCAL list=Acesso_Liberado_Firewall
+/ip firewall address-list add address=192.168.1.10 comment=LOCAL list=Acesso_Liberado_Firewall
+/ip firewall address-list add address=192.168.1.254 comment=LOCAL list=Acesso_Liberado_Firewall
+
+## remove regras de filtro anteriores
+/ip firewall filter remove [find comment="Protecao acesso externo"]                
+
+## adiciona as regras de filtro de portas e acesso conforme a lista de enderecos IP autorizados
+/ip firewall filter
+   add action=add-src-to-address-list address-list=Acesso_Liberado_Firewall \
+       address-list-timeout=1d chain=input comment="Protecao acesso externo" \
+       dst-port=8887 protocol=tcp
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=21 \
+       protocol=tcp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=22 \
+       protocol=tcp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=23 \
+       protocol=tcp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=161 \
+       protocol=udp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=2000 \
+       protocol=udp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=2000 \
+       protocol=tcp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" dst-port=8291 \
+       protocol=tcp src-address-list=!Acesso_Liberado_Firewall
+   add action=drop chain=input comment="Protecao acesso externo" \
+       connection-state=invalid
+
+## remove a regra de monitoramento da voltagem (caso existir anteriormente)
+/ip firewall nat remove [find comment="monitoramento VOLTAGEM"]
+
+## adiciona a regra de monitoramento da voltagem (toda vez qu a voltagem baixar, a porta 998 sera desativada, causando alerta no The Dude, Nagios, Zabbix, etc...)
+/ip firewall nat add chain=dstnat action=dst-nat to-ports=22 protocol=tcp src-address=192.168.1.0/24 dst-port=998 log=no log-prefix="" comment="monitoramento VOLTAGEM"
+
+## remove a regra de padronizacao do equipamento
+/ip firewall nat remove [find comment="monitoramento PADRONIZACAO"]
+
+## adiciona a regra de padronizacao do equipamento, definindo a porta a ser monitorada, para identificar quais equipamentos estao fora de padronizacao
+/ip firewall nat add action=dst-nat chain=dstnat comment="monitoramento PADRONIZACAO" dst-port=997 protocol=tcp src-address=192.168.1.0/24 to-ports=22
+
+## altera a senha padrao, caso for necessario
+/user set [find name=admin] password=admin
